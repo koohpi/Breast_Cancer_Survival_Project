@@ -1,0 +1,1355 @@
+---
+title: "Data Science Project - Breast Cancer Survival with SEER data"
+author: "KoohPy <- Koohyar Pooladvand"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document:
+    latex_engine: lualatex  # Use lualatex engine instead of pdf_engine
+  word_document: 
+editor_options:
+  markdown:
+    wrap: 72
+bibliography: references.bib
+---
+
+### Data Preparation
+
+In this project, I have chosen to work on **breast cancer**. There are
+various resources available on this topic, with the [**Surveillance,
+Epidemiology, and End Results
+(SEER)**](https://seer.cancer.gov/data/access.html) [1] program being
+the most reliable one.
+
+The **SEER Program** of the National Cancer Institute (NCI) collects and
+publishes cancer data through a coordinated system of strategically
+placed cancer registries, covering nearly 30% of the US population.
+
+Currently, there are **18 SEER registries** in the USA. You can find
+this information on the following website: SEER Data Access.
+
+I have also utilized the following repository to assist me with this
+project:
+[SEER_solid_tumor](https://github.com/zgalochkina/SEER_solid_tumor) [2].
+The database contains extensive data, and my investigation will focus
+solely on **breast cancer** for the years 2011-2015 and 2019-2020. SEER
+provides a software called **STAT** that I’ve used to import the data,
+which is stored and utilized on my local computer. Additionally, there
+are two GitHub repositories that I’ve referenced to some extent in this
+project:
+
+1.  The [first](https://github.com/zgalochkina/SEER_solid_tumor) [2]
+    repository covers all types of cancer, but my study specifically
+    focuses on **breast cancer**, addressing different research
+    questions.
+
+2.  The
+    [second](https://github.com/CarlosHernandezP/xai-healthcare/tree/master)
+    [3] repository has conducted machine learning analyses on various
+    cancer types using Python (not R). I’ve drawn inspiration and
+    learned methods from their approach to survival studies in cancer
+    patients.
+
+## R initialization
+
+Checking all the packages are installed and if not install as needed.
+
+```{r Code_initialization, echo= FALSE, results='hide', warning=FALSE, message=FALSE}
+required_packages <- c("RSQLite","devtools","tidyverse","DBI","dplyr","odbc","openintro","ggplot2","psych","reshape2","knitr","markdown","shiny","R.rsp","fivethirtyeight","RCurl", "stringr","readr","glue","data.table", "hflights", "jsonlite", "rjson", "XML", "xml2", "rvest", "readxl", "openxlsx", "httr2","kableExtra", "tinytex", "tidytext","textdata", "wordcloud", "plyr", "survival", "scales", "stats", "forcats", "gridExtra", "plotrix", "mapproj",  "rmarkdown", "R.utils", "utils", "skimr","GGally", "caret","purrr", "corrplot", "mice","vcd",
+                       "Hmisc", "mice","randomForest", "survival","reticulate",
+                       "randomForestSRC")
+
+not_installed <- required_packages[!(required_packages %in% installed.packages()[ , "Package"])]
+
+if(length(not_installed) == 0) {
+  print("All required packages are installed")
+} else {
+  print(paste(length(not_installed), "package(s) need to be installed.")) # Print the list of packages that need to be installed
+  tryCatch({
+    install.packages(not_installed, dependencies = TRUE)
+  }, error = function(e) {
+    cat("Error occurred during package installation:", e$message, "\n")
+  })
+}
+
+
+#remotes::install_github("cran/SEER2R")
+#remotes::install_github("cran/maptools")
+#remotes::install_github("cran/rgeos")
+#remotes::install_github("cran/rgdal")
+
+# define different paths to load the files 
+library(tinytex)
+library(textdata)
+library(tidytext)
+library(tidyr)
+library(ggplot2)
+library(wordcloud)
+library(plyr)       # for 'ddply' function
+library(dplyr) # for 'ddply' function
+library(reshape2)
+library(tidyverse)  # filter, transform, plot data with 'ggplot2', 'tibble', 'tidyr', 'readr', 'purrr', 'dplyr' packages
+library(SEER2R)     # read SEER data files
+library(survival)   # Kaplan-Meier, Cox
+library(scales)     # transform data scale on plot
+library(stats)      # for 'fisher.test', 'aov' functions
+library(stringr)    # for 'str_replace_all' function
+library(forcats)    # for 'fct_recode' function
+library(gridExtra)  # for 'grid.arrange' function
+library(plotrix)    # for 'addtable2plot' function
+#library(maptools)   # map data to 50 states
+library(mapproj)    # map data to 50 states
+#library(rgeos)      # map data to 50 states
+#library(rgdal)      # map data to 50 states
+library(knitr)      # for reports
+library(R.utils)    # to unzip .gz population data file
+library(utils)      # to unzip .zip GIS files for maps
+library(skimr)
+library(caret)
+library(GGally)
+library(corrplot)
+library(kableExtra)
+library(vcd)   # for association measures
+library(Hmisc) # for correlation coefficients
+library(mice) # for data ipution 
+library(randomForest)
+library(randomForestSRC)
+library(survival)
+library(reticulate)
+
+
+
+
+
+#surpass the error message for dplyr to not show the masking
+suppressPackageStartupMessages(library(dplyr))
+
+```
+
+### Research question
+
+The primary focus of my research is to explore the survival rates of
+breast cancer patients and the various factors influencing these rates,
+including age, cancer type, treatment modalities, and other pertinent
+parameters. The commonly utilized five-year survival rate benchmark
+serves as a pivotal point of analysis in this study.
+
+Acknowledging the significance of this benchmark, I have divided the
+data into two distinct datasets. The dataset spanning from 2011 to 2015
+assumes that the status of all patients within that period is known up
+to the database’s current date in 2022. Additionally, I have selected
+the most recent data from 2019 to 2020 as the target years for potential
+correlation and regression studies to estimate survival rates.
+
+Although my research is not conducted within a strictly scientific
+framework, it is approached with rigor and attention to detail. While I
+do not possess expertise in the field of breast cancer, my personal
+connection to the topic motivates me to delve deeper into understanding
+the complexities surrounding it.
+
+The dataset from 2011 to 2015 comprises approximately 303,000 rows with
+36 selected columns. For the purpose of prediction, I have chosen to
+focus solely on the 2019-2020 data, which encompasses about 131,000
+rows. The multifaceted nature of the research question necessitates a
+thorough examination, from data tidying to cleaning.
+
+Moreover, I intend to supplement my analysis with a brief literature
+review to contextualize my research questions and hypotheses. This
+review will encompass previous studies on breast cancer survival rates,
+factors affecting survival, and methodologies employed in similar
+analyses.
+
+Some of the key parameters under consideration include years of
+diagnoses, age groups at diagnosis, and cancer type. However, I also
+recognize the importance of incorporating additional factors such as
+tumor characteristics and treatment modalities to provide a
+comprehensive understanding of breast cancer survival outcomes.
+
+In conclusion, while my knowledge of the subject may not be extensive, I
+am committed to learning and contributing meaningful insights to the
+field of breast cancer research through meticulous analysis and
+interpretation of data.
+
+### Note on 5 years threshold
+
+According to the American Cancer Society, the five-year relative
+survival rate for localized breast cancer is around 99%, but it drops to
+about 27% for distant-stage breast cancer. These rates can vary over
+time and with advances in treatment. Reference [5]: American Cancer
+Society - Breast Cancer Survival Rates
+
+```{r, import_data, echo = TRUE}
+
+# Replace "file.txt" with the path to your text file
+directory <- "C:/Users/kohya/OneDrive/CUNY/DATA 606/DATA 606 Spring/Project"
+file_2020 <- "BREAST_2019-2020-updated.csv"
+file_serv <- "BREAST_2011-2015.csv"
+# Complete the file path
+full_path_serv <- file.path(directory, file_serv)
+full_path_eval<- file.path(directory, file_2020)
+
+
+BREAST_DF_surv <- read.csv(full_path_serv, header = TRUE,
+                      na.strings = "NA", check.names = FALSE)
+BREAST_DF_eval <- read.csv(full_path_eval, header = TRUE,
+                      na.strings = "NA", check.names = FALSE)
+
+labels_of_interest <- c("Primary Site - labeled")
+
+# View the first few rows of the data frame
+kable(head(BREAST_DF_surv, 10))
+
+kable(head(BREAST_DF_eval, 10))
+
+```
+
+### Cases
+
+There are 131,395 cases in the BREAST cancer list of 2019-2020. And
+There are 303557 in 2011-2015 dataset.
+
+### Data collection
+
+I used the SEER \*STAT to collect the data and export it as a TXT to be
+able to import it to the R for analyses. How SEER collects the data is
+explained in the following page in summary:
+
+-   The SEER program collects cancer incidence data through a network of
+    population-based cancer registries. These registries gather
+    information on patient demographics, primary tumor site, tumor
+    morphology, stage at diagnosis, and first course of treatment. They
+    also follow up with patients for vital status.
+
+-   By law, these facilities are required to report new cancer cases to
+    a central cancer registry, like a state cancer registry.
+
+-   [The SEER program releases new research data annually, based on
+    submissions from the previous year, and makes it available for
+    public use through a data request
+    process](https://seer.cancer.gov/data-software/). This comprehensive
+    approach ensures that the SEER database is a valuable resource for
+    cancer research and surveillance.
+
+<https://training.seer.cancer.gov/registration/data/collection.html>
+
+### Type of study
+
+This will be an observational study, information is gathered for
+different patients and I will be evaluating the available data to
+present and evaluate.
+
+### Data Source
+
+Data is collected from SEER program and I used SEER \*STAT software to
+glean them in a format that can be used and imported as TXT to R
+[@SEER2023].
+
+"providing additional details about the specific variables included in
+dataset and how they were collected"
+
+### Dependent Variable
+
+We have a combination of both numeric and categorical data to work with.
+For example, while the number of tumors, and survival months are
+qualitative. Other like race, marital status, type of cancer are
+categorical.
+
+Categorical features, such as ‘Median household income ...’ ‘Marital
+Status,’ ‘Grade recode’ ‘laterality’ and ‘Radiatio recode' and so on are
+represented as objects (characters).
+
+Integer data types (int64) are assigned to ‘Patient ID,’ ‘Year of
+diagnosis,’ ‘total number of ...'.
+
+```{r variable_structure, echo=TRUE}
+
+# Find unique values in each column
+# Apply function to find unique values for each column
+#find the number of unique values in each column  
+unique_values <- data.frame(unique = apply(BREAST_DF_surv, 2, function(x) length(unique(x))),colnames = colnames(BREAST_DF_surv))
+
+#fidn the number of unique values and the unique values themselves 
+unique_info <- data.frame(
+  unique_count = sapply(BREAST_DF_surv, function(x) length(unique(x))),
+  unique_values = sapply(BREAST_DF_surv, function(x) toString(unique(x))),
+  column_names = names(BREAST_DF_surv)
+)
+
+
+# Check for NULL values
+any_null <- any(sapply(BREAST_DF_surv, is.null))
+
+# Check for NA values
+any_na <- any(sapply(BREAST_DF_surv, is.na))
+
+# Check if there are any NULL or NA values
+if (any_null || any_na) {
+  print("The data frame contains NULL or NA values.")
+} else {
+  print("The data frame does not contain any NULL or NA values.")
+}
+
+has_na_character <- any(sapply(BREAST_DF_surv, function(x) any(x == "NA")))
+
+if (has_na_character) {
+  print("The data frame contains character values of 'NA'.")
+} else {
+  print("The data frame does not contain character values of 'NA'.")
+}
+
+```
+
+### Data tiding
+
+Upon exploring the data, it seems data might have an empty column, in
+this data-based, the empty values are filled with "Blanks". Thus, in
+this section, I first explore if there is any column which is entirely
+empty, then will remove it and if there are others which have some empty
+values filled with "Blank(s)" I will replaced them with "NA" which is
+handled better in dplyr and tydiverse.
+
+```{r data_tyding, echo=TRUE}
+
+# There are cells in the DF that contianes "Blank(s) which is literally NA, first I want to find if there is any column that all is values is Blank(s), if then remove them.
+
+#look for columns with all "Blank(s)" values
+Empty_column <- BREAST_DF_surv %>%
+  dplyr::summarise(dplyr::across(everything(), ~all(. == "Blank(s)"))) %>%
+  as.logical() %>%
+  unlist()
+
+# Get the names of columns with all cells containing "Blank(s)"
+blank_column_names <- names( BREAST_DF_surv)[Empty_column]
+
+# Print the column names with all cells containing "Blanks"
+print(blank_column_names)
+
+#remove those empty column from thr DF
+BREAST_DF_surv <- BREAST_DF_surv[, !names(BREAST_DF_surv) %in% blank_column_names]
+BREAST_DF_eval <- BREAST_DF_eval[, !names(BREAST_DF_eval) %in% blank_column_names]
+
+#Then let's see if there is any cell in the remaining that migth still have "Blank(s)", if so repalce it with NA which is better handle in R
+
+#This code first replaces all occurrences of "Blank(s)" with an empty string "", and then uses na_if() to convert the empty strings to NA. Now, all cells that previously had "Blank(s)" are replaced with NA, making it easier to handle missing values in R.
+
+BREAST_DF_surv <- BREAST_DF_surv %>%
+  mutate_if(is.character, ~ifelse(. == "Blank(s)", "", .)) %>%  # For character columns
+  mutate_if(is.numeric, ~ifelse(. == "", as.numeric(NA), .))  # For numeric columns
+
+# Now, empty character cells are replaced with NA
+BREAST_DF_surv <- BREAST_DF_surv %>%
+  mutate_if(is.character, na_if, "")
+
+
+#same to be done for eval dataset
+
+
+BREAST_DF_eval <- BREAST_DF_eval %>%
+  mutate_if(is.character, ~ifelse(. == "Blank(s)", "", .)) %>%  # For character columns
+  mutate_if(is.numeric, ~ifelse(. == "", as.numeric(NA), .))  # For numeric columns
+
+# Now, empty character cells are replaced with NA
+BREAST_DF_eval <- BREAST_DF_eval %>%
+  mutate_if(is.character, na_if, "")
+
+#Change characters to numerics 
+BREAST_DF_surv$`Months from diagnosis to treatment` <- as.numeric(BREAST_DF_surv$`Months from diagnosis to treatment`)
+BREAST_DF_surv$`Survival months` <- as.numeric(BREAST_DF_surv$`Survival months`)
+BREAST_DF_surv$`Total number of in situ/malignant tumors for patient` <- 
+  as.numeric(BREAST_DF_surv$`Total number of in situ/malignant tumors for patient`)
+BREAST_DF_surv$`Total number of benign/borderline tumors for patient` <- 
+  as.numeric(BREAST_DF_surv$`Total number of benign/borderline tumors for patient`)
+#Change the character to numeric in Eval dataset too
+BREAST_DF_eval$`Months from diagnosis to treatment` <- as.numeric(BREAST_DF_eval$`Months from diagnosis to treatment`)
+BREAST_DF_eval$`Survival months` <- as.numeric(BREAST_DF_eval$`Survival months`)
+BREAST_DF_eval$`Total number of in situ/malignant tumors for patient` <- 
+  as.numeric(BREAST_DF_eval$`Total number of in situ/malignant tumors for patient`)
+BREAST_DF_eval$`Total number of benign/borderline tumors for patient` <- 
+  as.numeric(BREAST_DF_eval$`Total number of benign/borderline tumors for patient`)
+
+
+# View the structure of the data frame
+#str(BREAST_DF_surv)
+skimr::skim(BREAST_DF_surv)
+skimr::skim(BREAST_DF_eval)
+
+```
+
+### Relevant summary statistics
+
+Provide summary statistics for each the variables. Also include
+appropriate visualizations related to your research question (e.g.
+scatter plot, boxplots, etc). This step requires the use of R, hence a
+code chunk is provided below. Insert more code chunks as needed.
+
+```{r summary_statistic_1, echo=TRUE }
+
+#find column name to use later if needed
+DF_col_names <- colnames(BREAST_DF_surv)
+
+#Find unique values in `Race recode (W, B, AI, API)` column
+uniques_races <- unique(BREAST_DF_surv$`Race recode (W, B, AI, API)`)
+
+# use ggplot to plot the race information 
+BREAST_DF_surv |> 
+  ggplot(mapping = aes(x=`Race recode (W, B, AI, API)`)) +
+  geom_bar(stat = "count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = -0.5) +
+  ylim(0, 246000)
+
+#we want to coampre the percentage of the diferent race in the eval and survival data, thus i use summarise to create two new DF to only store the sumamry statistic specifically including the percentage of race based on the population
+#find percentage of race for the survival
+BREAST_DF_perc_surv <- BREAST_DF_surv %>%
+  group_by(`Race recode (W, B, AI, API)`) %>%
+  dplyr::summarise(count = dplyr::n()) %>%  # Calculate count per group
+  ungroup() %>%  # Ungroup the data
+  mutate(total_count = sum(count)) %>%  # Calculate total count
+  mutate(percentage = count / total_count * 100)  # Calculate percentage using total count
+
+# Plot the percentages
+ggplot(BREAST_DF_perc_surv, aes(x = `Race recode (W, B, AI, API)`, y = percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), vjust = -0.5, color = "black") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Percentage of Population by Race between 2011-2015", x = "Race recode (W, B, AI, API)", y = "Percentage") + ylim (0,90)
+
+BREAST_DF_eval |> 
+  ggplot(mapping = aes(x=`Race recode (W, B, AI, API)`)) +
+  geom_bar(stat = "count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = -0.5) +
+  ylim(0, 104000)
+
+BREAST_DF_perc_eval <- BREAST_DF_eval %>%
+  group_by(`Race recode (W, B, AI, API)`) %>%
+  dplyr::summarise(count = dplyr::n()) %>%  # Calculate count per group
+  ungroup() %>%  # Ungroup the data
+  mutate(total_count = sum(count)) %>%  # Calculate total count
+  mutate(percentage = count / total_count * 100)  # Calculate percentage using total count
+
+# Plot the percentages
+ggplot(BREAST_DF_perc_eval, aes(x = `Race recode (W, B, AI, API)`, y = percentage)) +
+  geom_bar(stat = "identity", fill = "plum") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), vjust = -0.5, color = "black") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Percentage of Population by  between 2019-2022", x = "Race recode (W, B, AI, API)", y = "Percentage") + ylim (0,90)
+
+
+
+# In this section I want to focus on the age and see if age matetrs, same sets of data is going to be plot for ages, starting with percentage for eval and surve 
+#find percentage of race for the survival
+#find ubique values for column ratted to age 
+uniques_ages <- unique(BREAST_DF_surv[29])
+
+BREAST_DF_age_perc_surv <- BREAST_DF_surv %>%
+  dplyr::group_by(`Age recode (<60,60-69,70+)`) %>%
+  dplyr::summarise(count = dplyr::n()) %>%  # Calculate count per group
+  ungroup() %>%  # Ungroup the data
+  mutate(total_count = sum(count)) %>%  # Calculate total count
+  mutate(percentage = count / total_count * 100)  # Calculate percentage using total count
+
+perc_max <- max(BREAST_DF_age_perc_surv$percentage)
+# Plot the percentages
+ggplot(BREAST_DF_age_perc_surv, aes(x = `Age recode (<60,60-69,70+)`, y = percentage)) +
+  geom_bar(stat = "identity", fill = "brown") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), hjust = -0.1 , vjust = 0.4, color = "black", angle = 90) +  # Rotate the text vertically
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +labs(title = "Percentage of Population by Age range 2011-2015", 
+       x = "Age range", 
+       y = "Percentage") + 
+  ylim(0, round(1.5 * perc_max, 1))
+
+# In this section we do the same analyses for Eval dta based on age
+BREAST_DF_age_perc_eval <- BREAST_DF_eval %>%
+  dplyr::group_by(`Age recode (<60,60-69,70+)`) %>%
+  dplyr::summarise(count = dplyr::n()) %>%  # Calculate count per group
+  ungroup() %>%  # Ungroup the data
+  mutate(total_count = sum(count)) %>%  # Calculate total count
+  mutate(percentage = count / total_count * 100)  # Calculate percentage using total count
+
+# Plot the percentages
+ggplot(BREAST_DF_age_perc_eval, aes(x = `Age recode (<60,60-69,70+)`, y = percentage)) +
+  geom_bar(stat = "identity", fill = "brown") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), hjust = -0.1 , vjust = 0.4, color = "black", angle = 90) +  # Rotate the text vertically
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +labs(title = "Percentage of Population by Age range 2019-2022", 
+       x = "Age range", 
+       y = "Percentage") + 
+  ylim(0, round(1.5 * perc_max, 1))
+
+
+# In this section, we do the analyses on household income} 
+#find ubique values for column ratted to age 
+uniques_householdes <- unique(BREAST_DF_surv[27])
+
+BREAST_DF_income_perc_surv <- BREAST_DF_surv %>% dplyr::group_by(`Median household income inflation adj to 2021`) %>% 
+  dplyr::summarise(count = dplyr::n()) %>% # Calculate count per group 
+  ungroup() %>% # Ungroup the data 
+  mutate(total_count = sum(count)) %>% # Calculate total count 
+  mutate(percentage = count / total_count * 100) # Calculate percentage using total count
+
+perc_max <- max(BREAST_DF_income_perc_surv$percentage) # Plot the percentages 
+ggplot(BREAST_DF_income_perc_surv, aes(x = `Median household income inflation adj to 2021`, y = percentage)) + 
+  geom_bar(stat = "identity", fill = "brown") + 
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), hjust = -0.1 , vjust = 0.4, color = "black", angle = 0) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Percentage of Population by income 2011-2015", x = "Household Income", y = "Percentage") + 
+  ylim(0, 1.2*perc_max)
+
+
+#In this section we do the same analyses for Eval data based on age
+BREAST_DF_income_perc_eval <- BREAST_DF_eval %>% 
+  dplyr::group_by(`Median household income inflation adj to 2021`) %>% 
+  dplyr::summarise(count = dplyr::n()) %>% # Calculate count per group 
+  ungroup() %>% # Ungroup the data 
+  mutate(total_count = sum(count)) %>% # Calculate total count 
+  mutate(percentage = count / total_count * 100) # Calculate percentage using total count
+
+
+#Plot the percentages
+perc_max <- max(BREAST_DF_income_perc_eval$percentage)
+ggplot(BREAST_DF_income_perc_eval, aes(x = `Median household income inflation adj to 2021`, y = percentage)) + 
+  geom_bar(stat = "identity", fill = "brown") + 
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), hjust = -0.1 , vjust = 0.4, color = "black", angle = 0) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Percentage of Population by income 2019-2022", x = "Household Income", y = "Percentage") + 
+  ylim(0, 1.2*perc_max)
+
+
+
+```
+
+```{r more_sumamry, echo=TRUE}
+
+# In this section I want to focus on the cause of dead, COD, and investigate whether those who have had cancer are alive, anf if no what was the cause of dead. 
+#find percentage of deceased due to breast cancer
+#find unique values for column ratted to age 
+
+uniques_CODs <- unique(BREAST_DF_surv[20])
+DF_col_names[20]
+
+# check if the column `COD to site recode` has value of Alive or Breast meaning they are still alive or have died because of breast cancer, and other passed a way but not because of Breast cancer. 
+
+BREAST_DF_surv <- BREAST_DF_surv %>%
+  mutate(COD = ifelse(`COD to site recode` %in% c("Alive","Breast"), `COD to site recode`, "Other"))
+
+
+
+
+```
+
+## Results of the exploratory data analysis
+
+In this section, we look into some exploratory data analysis such as
+
+-   Cause of death of those who have had cancer
+
+-   Total number of tumors (Malignant or Benign)
+
+-   Radiation and chemotherapy
+
+-   Surgery Performed
+
+-   Marital Status
+
+-   Household income
+
+We looked into the population and then among the population how many
+survived the cancer. Later we will run some analyses to see whether
+those were important or deciding factors or not.
+
+```{r EDA_SURV, echo=TRUE, results='asis'}
+
+
+BREAST_DF_COD_perc_surv <- BREAST_DF_surv %>%
+  dplyr::group_by(COD) %>%
+  dplyr::summarise(count = dplyr::n()) %>%  # Calculate count per group
+  ungroup() %>%  # Ungroup the data
+  mutate(`Total Count` = sum(count)) %>%  # Calculate total count
+  mutate(Population = round(count / `Total Count` * 100),2)  # Calculate percentage using total count
+
+kable(BREAST_DF_COD_perc_surv)
+
+# Let's first group by the number of tumor and find hom many in the population have those and then among them look how many passed away only due to breast. It is not completely correct, becuse thre are some that migth have passed away due to Breast cancer complication that is not in this counts. 
+BREAST_DF_TNoT_perc_surv <- BREAST_DF_surv %>%
+  dplyr::group_by(`Total number of in situ/malignant tumors for patient`) %>%
+  dplyr::add_count() %>%
+  filter(COD == "Breast") %>%
+  dplyr::summarise(`Event Population` = n(), 
+            Population = dplyr::first(n))  # Use `first()` to extract the total count in each 
+
+# Do simple math to fidn the percentage of the groupn un the population and then the percentage of the deceased within the group. 
+
+BREAST_DF_TNoT_perc_surv$`Group % in total` <- round(BREAST_DF_TNoT_perc_surv$Population/sum(BREAST_DF_TNoT_perc_surv$Population)*100,2)
+
+BREAST_DF_TNoT_perc_surv$`Death %` <- round(BREAST_DF_TNoT_perc_surv$`Event Population`/BREAST_DF_TNoT_perc_surv$Population*100,2)
+
+    
+kable(BREAST_DF_TNoT_perc_surv)
+
+
+# Let' focus on the treatemnt, There are two type of treatment and can be a 4 combination ,as follows: Radiation: R, Chemoteraphy: C,  R:N-C:N,  R:Y-C:N, R:N-C:Y, R:Y-C:Y. We must look into these 4 group and find the total number and then in each find the number of death. Finally report them imialrly that we have done above. 
+
+BREAST_DF_surv <- BREAST_DF_surv %>% 
+  mutate(Radiation = ifelse(`Radiation recode` %in% c("None/Unknown","Refused (1988+)","Recommended, unknown if administered"),"No/Unknown","Yes"))
+BREAST_DF_eval <- BREAST_DF_eval %>% 
+  mutate(Radiation = ifelse(`Radiation recode` %in% c("None/Unknown","Refused (1988+)","Recommended, unknown if administered"),"No/Unknown","Yes"))
+
+#use DPLYR to filter based on two parameters chemotheraphy and radiation therapy and evalaute the death rate accordingly  
+BREAST_DF_RNC_perc_surv <- BREAST_DF_surv %>%
+  dplyr::group_by(Radiation,`Chemotherapy recode (yes, no/unk)`) %>%
+  dplyr::add_count() %>%
+  filter(COD == "Breast") %>%
+  dplyr::summarise(`Event Population` = n(), 
+            Population = dplyr::first(n))  # Use `first()` to extract the total count in each 
+
+# Replace "No/Unknown" with "No" in the original columns
+BREAST_DF_RNC_perc_surv$Radiation <- ifelse(BREAST_DF_RNC_perc_surv$Radiation == "No/Unknown", "No", BREAST_DF_RNC_perc_surv$Radiation)
+
+BREAST_DF_RNC_perc_surv$"Chemotherapy recode (yes, no/unk)" <- ifelse(BREAST_DF_RNC_perc_surv$"Chemotherapy recode (yes, no/unk)" == "No/Unknown", "No", BREAST_DF_RNC_perc_surv$"Chemotherapy recode (yes, no/unk)")
+
+# Create a new column "Radiation_Chemo" with values separated by "/"
+BREAST_DF_RNC_perc_surv$Radiation_Chemo <- paste(BREAST_DF_RNC_perc_surv$Radiation, BREAST_DF_RNC_perc_surv$"Chemotherapy recode (yes, no/unk)", sep = "/")
+
+
+# Optionally, remove the original "Radiation" and "Chemotherapy recode (yes, no/unk)" columns
+BREAST_DF_RNC_perc_surv <- subset(BREAST_DF_RNC_perc_surv, select = -c(Radiation, `Chemotherapy recode (yes, no/unk)`))
+
+BREAST_DF_RNC_perc_surv <- BREAST_DF_RNC_perc_surv[, c("Radiation_Chemo", setdiff(names(BREAST_DF_RNC_perc_surv), "Radiation_Chemo"))]
+
+
+# Reshape the dataframe from wide to long format
+
+#knowing the population calcualte the gorup rate and death rate in each group 
+BREAST_DF_RNC_perc_surv$`Group % in total` <- round(BREAST_DF_RNC_perc_surv$Population/sum(BREAST_DF_RNC_perc_surv$Population)*100,2)
+
+BREAST_DF_RNC_perc_surv$`Death %` <- round(BREAST_DF_RNC_perc_surv$`Event Population`/BREAST_DF_RNC_perc_surv$Population*100,2)
+
+
+
+kable(BREAST_DF_RNC_perc_surv)
+
+
+#next let's look into the surgery and the survival rate and whether it migth have been critical or not. 
+BREAST_DF_SUR_perc_surv <- BREAST_DF_surv %>%
+  dplyr::group_by(`Reason no cancer-directed surgery`) %>%
+  dplyr::add_count() %>%
+  filter(COD == "Breast") %>%
+  dplyr::summarise(`Event Population` = n(), 
+            Population = dplyr::first(n))  # Use `first()` to extract the total 
+
+#knowing the population calcualte the gorup rate and death rate in each group 
+BREAST_DF_SUR_perc_surv$`Group % in total` <- round(BREAST_DF_SUR_perc_surv$Population/sum(BREAST_DF_SUR_perc_surv$Population)*100,2)
+
+BREAST_DF_SUR_perc_surv$`Death %` <- round(BREAST_DF_SUR_perc_surv$`Event Population`/BREAST_DF_SUR_perc_surv$Population*100,2)
+
+kable(BREAST_DF_SUR_perc_surv)
+
+
+
+#next let's look into the marital status and the survival rate and whether it migth have been critical or not. 
+BREAST_DF_MARI_perc_surv <- BREAST_DF_surv %>%
+  dplyr::group_by(`Marital status at diagnosis`) %>%
+  dplyr::add_count() %>%
+  filter(COD == "Breast") %>%
+  dplyr::summarise(`Event Population` = n(), 
+            Population = dplyr::first(n))  # Use `first()` to extract the total 
+
+#knowing the population calcualte the gorup rate and death rate in each group 
+BREAST_DF_MARI_perc_surv$`Group % in total` <- round(BREAST_DF_MARI_perc_surv$Population/sum(BREAST_DF_MARI_perc_surv$Population)*100,2)
+
+BREAST_DF_MARI_perc_surv$`Death %` <- round(BREAST_DF_MARI_perc_surv$`Event Population`/BREAST_DF_MARI_perc_surv$Population*100,2)
+
+kable(BREAST_DF_MARI_perc_surv)
+
+#next let's look into the Median household income and the survival rate and whether it migth have been critical or not. 
+BREAST_DF_HHI_perc_surv <- BREAST_DF_surv %>%
+  dplyr::group_by(`Median household income inflation adj to 2021`) %>%
+  dplyr::add_count() %>%
+  filter(COD == "Breast") %>%
+  dplyr::summarise(`Event Population` = n(), 
+            Population = dplyr::first(n))  # Use `first()` to extract the total 
+
+#knwoign the population calcualte the gorup rate and death rate in each group 
+BREAST_DF_HHI_perc_surv$`Group % in total` <- round(BREAST_DF_HHI_perc_surv$Population/sum(BREAST_DF_HHI_perc_surv$Population)*100,2)
+
+BREAST_DF_HHI_perc_surv$`Death %` <- round(BREAST_DF_HHI_perc_surv$`Event Population`/BREAST_DF_HHI_perc_surv$Population*100,2)
+
+kable(BREAST_DF_HHI_perc_surv)
+
+
+# Create a list to store all your dataframes
+DF_names <- c (
+  "BREAST_DF_TNoT_perc_surv", 
+  "BREAST_DF_RNC_perc_surv",
+  "BREAST_DF_SUR_perc_surv",
+  "BREAST_DF_MARI_perc_surv",
+  "BREAST_DF_HHI_perc_surv")
+
+# Create an empty list to store plots
+plot_list <- list()
+chart_color <- c("plum", "darkgreen", "darkred", "darkblue", "darkorange", "darkmagenta",
+                 "darkcyan", "lightgreen", "lightblue", "lightgray", "lightpink", "blue",
+                 "brown", "red")
+chart_title <- c("# of Malignant Tumors", 
+                 "Radiation/Chemo Status", 
+                 "Cancer Surgery",
+                 "Marital Status",
+                 "Household Income")
+
+# Loop through each dataframe
+for (i in 1:length(DF_names)) {
+  # Access the dataframe
+  df <- get(DF_names[i])
+  
+  # Generate a random color
+  random_color <- sample(chart_color, 1)
+  
+  # Get the name of the first column and wrap the text
+  column_name <- str_wrap(names(df)[1], width = 10)  # Adjust width as needed
+  
+  # Create the plot and store it in the plot list
+  plot <- ggplot(df, aes(x = !!rlang::sym(names(df)[1]), y = !!rlang::sym("Death %"))) +
+    geom_bar(stat = "identity", fill = random_color) +
+    labs(title = chart_title[i],
+         x = NULL, y = "Death %") +  # Remove x-axis label
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))  # Rotate x-axis labels
+
+  plot_list[[i]] <- plot
+}
+
+# Arrange the plots in a 2 by 3 matrix
+grid.arrange(grobs = plot_list, ncol = 3)
+
+
+
+# Plot individually 
+
+# Loop through each dataframe
+for (i in 1:length(DF_names)) {
+  # Access the dataframe
+  df <- get(DF_names[i])
+  
+  # Generate a random color
+  random_color <- sample(chart_color, 1)
+  
+  # Get the name of the first column and wrap the text
+  column_name <- str_wrap(names(df)[1], width = 10)  # Adjust width as needed
+  
+  # Create the plot and store it in the plot list
+  plot <- ggplot(df, aes(x = !!rlang::sym(names(df)[1]), y = !!rlang::sym("Death %"))) +
+    geom_bar(stat = "identity", fill = random_color) +
+    labs(title = chart_title[i],
+         x = NULL, y = "Death %") +  # Remove x-axis label
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))  # Rotate x-axis labels
+
+  # Print the plot
+  print(plot)
+}
+
+
+
+```
+
+## Correlation investigation
+
+In this section we will be using different R packages to perform
+correlation and other analyses on the data, to do so, we first need to
+slightly change our data to make them suitable for packages like
+`purrr`, `caret`, `GGally,` and so forth.
+
+The first step is to change the categorical data to factor in columns
+that they exist. Then we use the `purrr` to calculate chi-square for
+different variables. The strategy is to find the one with the highest
+effect in theory, thecode will calculate the p-values from chi-squared
+tests for independence between each categorical variable and the `COD`
+column. The lower the p-value, the stronger the evidence against the
+null hypothesis of independence, suggesting a significant association
+between the variable and `COD`. Then we simplify the model by keeping
+the most relevant, we also need to look into **homoscedasticity** and
+remove those that may contribute to.
+
+Then we explore the data, there are some column than can be eliminated
+from this analyses. i.e., year, race (there are two), and so on. The
+following lists those that are eliminated in the next steps of analyses.
+
+-   Sex, Year of diagnosis,
+-   Race and origin recode (NHW, NHB, NHAIAN, NHAPI, Hispanic), due to
+    collonearity with `Race Recode`
+-   Site recode ICD-O-3/WHO 2008, Site recode ICD-O-3 2023 Revision,
+    Diagnostic Confirmation, Survival months flag, COD to site recode
+    (replaced with COD), Patient ID, Year of follow-up recode, Year of
+    death recode, SEER other cause of death classification, RX
+    Summ--Systemic/Sur Seq (2007+), Origin recode NHIA (Hispanic,
+    Non-Hisp)
+
+### Fisher_test and chi-Square
+
+```{r Corr_inve, echo=TRUE, tidy=TRUE}
+
+# List of columns to remove
+uncritical_column <- c("Sex", "Year of diagnosis", 
+                       "Race and origin recode (NHW, NHB, NHAIAN, NHAPI, Hispanic)", 
+                       "Site recode ICD-O-3/WHO 2008", "Site recode ICD-O-3 2023 Revision", 
+                       "Diagnostic Confirmation, Survival months flag", "COD to site recode", 
+                       "Patient ID", "Year of follow-up recode", "Year of death recode", 
+                       "SEER other cause of death classification", 
+                       "RX Summ--Systemic/Sur Seq (2007+)",
+                       "Origin recode NHIA (Hispanic, Non-Hisp)",
+                       "Race and origin (recommended by SEER)",
+                       "Diagnostic Confirmation",
+                       "Sequence number", "Radiation recode")
+
+# Create BREAST_DF_surv_clean by removing uncritical columns
+BREAST_DF_surv_clean <- BREAST_DF_surv[, !names(BREAST_DF_surv) %in% uncritical_column]
+BREAST_DF_eval_clean <- BREAST_DF_eval[, !names(BREAST_DF_eval) %in% uncritical_column]
+
+
+# Identify character and numeric columns
+char_cols <- sapply(BREAST_DF_surv_clean, is.character)
+num_cols <- sapply(BREAST_DF_surv_clean, is.numeric)
+char_cols_e <- sapply(BREAST_DF_eval_clean, is.character)
+
+# Convert character columns to factors
+BREAST_DF_surv_clean[char_cols] <- lapply(BREAST_DF_surv_clean[char_cols], as.factor)
+BREAST_DF_eval_clean[char_cols_e] <- lapply(BREAST_DF_eval_clean[char_cols_e], as.factor)
+#BREAST_DF_surv[num_cols] <- lapply(BREAST_DF_surv[num_cols], as.factor)
+
+# Check the class of each column to ensure they are factors now
+#sapply(BREAST_DF_surv, class)
+
+
+#check to esure all variable have more than two levels 
+one_level_vars <- sapply(BREAST_DF_surv_clean, function(x) length(unique(x)) == 1)
+# Print variables with only one level
+one_level_vars_names <- names(one_level_vars)[one_level_vars]
+#print(names(one_level_vars)[one_level_vars])
+
+# Remove variables with only one level from the data frame
+BREAST_DF_surv_clean <- BREAST_DF_surv_clean[, !names(BREAST_DF_surv_clean) %in% one_level_vars_names]
+BREAST_DF_eval_clean <- BREAST_DF_eval_clean[, !names(BREAST_DF_eval_clean) %in% one_level_vars_names]
+
+
+# Function to calculate chi-squared test for independence
+chi_squared_cal <- function(var, data) {
+  tab <- table(data$COD, var)
+  chisq_result <- chisq.test(tab)
+  p_value <- chisq_result$p.value
+  return(p_value)
+}
+
+# Function to calculate Sisher-Exact test for independence
+fisher_exact_cal <- function(var, data) {
+  tab <- table(data$COD, var)
+  # Perform Fisher's exact test
+  fisher_result <- fisher.test(tab, simulate.p.value = TRUE)
+  # Extract the p-value
+  p_value <- fisher_result$p.value  
+  return(p_value)
+}
+
+
+# Initialize an empty list to store p-values
+p_values <- list()
+
+# Number of bootstrap samples
+n_bootstrap <- 50
+
+#I perform bootsrap and downasampling to eliminate the population effect on chi-square, still the correlation seems high with all be so close to 0 
+# Loop over each column in the dataframe
+for (col in names(BREAST_DF_surv_clean)) {
+  # Check if the column is a factor
+  if (is.factor(BREAST_DF_surv_clean[[col]])) {
+    # Initialize an empty vector to store p-values from bootstrap samples
+    bootstrap_p_values <- numeric(n_bootstrap)
+    
+    # Perform bootstrap sampling and calculate chi-squared p-value for each sample
+    for (i in 1:n_bootstrap) {
+      # Generate a bootstrap sample with replacement
+      bootstrap_data <- 
+        BREAST_DF_surv_clean[sample(nrow(BREAST_DF_surv_clean), 
+                                    size = 0.05 * nrow(BREAST_DF_surv_clean), 
+                                    replace = TRUE), ]
+      
+      # Calculate chi-squared p-value for the bootstrap sample
+      #bootstrap_p_values[i] <- chi_squared_cal(bootstrap_data[[col]], bootstrap_data)
+      bootstrap_p_values[i] <- fisher_exact_cal(bootstrap_data[[col]], bootstrap_data)
+    }
+    
+    # Calculate the mean p-value from bootstrap samples
+    mean_p_value <- mean(bootstrap_p_values)
+    
+    # Store the mean p-value for the column
+    p_values[[col]] <- mean_p_value
+  }
+}
+
+# Convert the list of p-values to a data frame
+p_values_df <- data.frame(variable = names(p_values), p_value = unlist(p_values))
+
+# Sort the results by p-values
+sorted_results <- p_values_df[order(p_values_df$p_value, na.last = TRUE), ]
+
+# Print the sorted p-values
+kable(sorted_results)
+
+```
+
+### PCA Analyses / Did not Work
+
+Principal Component Analysis (PCA) is a dimensionality reduction
+technique commonly used in data analysis and machine learning. Its
+primary goal is to transform a dataset consisting of possibly correlated
+variables into a set of linearly uncorrelated variables called principal
+components. These components are ordered by the amount of variance they
+explain in the original data.
+
+```{r PCA, echo=TRUE}
+
+# Not sucessful, eliminated form analyses
+
+# Run PCA (Principal Component Analyses)
+# Dataframe containing factors and numeric variables
+
+# Convert factors to dummy variables
+dummy_data <- model.matrix(~., data = BREAST_DF_surv_clean)
+
+# Scale the data
+scaled_data <- scale(dummy_data)
+
+# Identify columns with zero variance
+zero_variance_cols <- apply(scaled_data, 2, var) == 0
+
+# Print columns with zero variance
+print(names(zero_variance_cols)[zero_variance_cols])
+
+# Remove columns with zero variance
+scaled_data_filtered <- scaled_data[, !zero_variance_cols]
+
+# Add a small value to the variance of each column to avoid exactly zero variance
+scaled_data_filtered <- scaled_data_filtered + 1e-6
+
+
+# Perform PCA on filtered data
+#pca_result <- prcomp(scaled_data_filtered, center = TRUE, scale. = TRUE)
+
+# Print summary
+#summary(pca_result)
+
+# Explained variance by each principal component
+#print(pca_result$importance)
+
+# Explained variance ratio
+#variance_ratio <- pca_result$sdev^2 / sum(pca_result$sdev^2)
+
+# Print the proportion of variance explained by each principal component
+#print(variance_ratio)
+
+# Visualize scree plot
+#plot(variance_ratio, type = "b", xlab = "Principal Component", ylab = "Proportion of Variance Explained")
+
+# Biplot
+#biplot(pca_result)
+
+
+
+```
+
+### Correlation Analyses
+
+```{r corr_analyses, echo=TRUE}
+
+# Select numerical columns in your dataset
+numeric_cols <- sapply(BREAST_DF_surv_clean, is.numeric)
+
+# Separate numerical and categorical columns
+numeric_data <- BREAST_DF_surv_clean[, numeric_cols]
+categorical_data <- BREAST_DF_surv_clean[, !numeric_cols]
+
+# Calculate Pearson correlation coefficient between "COD" and numerical columns
+correlation_with_COD_numeric <- rcorr(as.matrix(numeric_data), y = BREAST_DF_surv_clean$COD, type = "pearson")
+
+# Print correlation coefficients for numerical columns
+kable(print(correlation_with_COD_numeric$r))
+
+# Calculate Cramér's V for association between "COD" and categorical columns
+cramer_v <- apply(categorical_data, 2, function(x) {
+  table_data <- table(x, BREAST_DF_surv_clean$COD)
+  assoc(table_data, method = "cramers")
+})
+
+# Print Cramér's V for association with categorical columns
+print(cramer_v)
+
+
+
+
+#Since there are many factors and categorical variables I need to encode them. 
+#the followign code can deal with encoding
+#Find the index of the column named "COD"
+cod_column_index <- which(names(BREAST_DF_surv_clean) == "COD")
+
+# Exclude "COD" column from model matrix
+encoded_data <- model.matrix(~ . - 1, data = BREAST_DF_surv_clean[, -cod_column_index])
+
+# Select encoded variables and target variable
+encoded_data <- cbind(encoded_data, COD = BREAST_DF_surv_clean$COD)
+
+# Calculate correlation matrix
+correlation_matrix <- cor(encoded_data)
+
+summary(correlation_matrix )
+
+# Plot correlation matrix as a heatmap
+corrplot(correlation_matrix, method = "color", tl.cex = 0.7)
+
+# Extract correlation with COD
+correlation_with_COD <- correlation_matrix[, "COD"]
+
+# Convert correlation_with_COD to a data frame with column names
+correlation_df <- data.frame(variable = names(correlation_with_COD), correlation = correlation_with_COD)
+
+# Sort correlation values
+correlation_df <- correlation_df[order(correlation_df$correlation, decreasing = TRUE), ]
+
+# Create bar plot using ggplot2
+ggplot(correlation_df, aes(x = variable, y = correlation)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Correlation with COD", x = "Variables", y = "Correlation")
+
+
+# Find the index of the column named "COD"
+cod_column_index <- which(names(BREAST_DF_surv_clean) == "COD")
+
+# Exclude "COD" column from model matrix and encode factors
+encoded_data <- predict(dummyVars(" ~ .", data = BREAST_DF_surv_clean[, -cod_column_index], fullRank = TRUE), newdata = BREAST_DF_surv_clean)
+
+
+
+# Remove the "COD" column from encoded_data
+encoded_data <- encoded_data[, -cod_column_index]
+
+# Add "COD" column back to encoded_data
+encoded_data <- cbind(encoded_data, COD = BREAST_DF_surv_clean$COD)
+
+# Calculate correlation matrix
+correlation_matrix <- cor(encoded_data)
+
+# Extract correlation with COD
+correlation_with_COD <- correlation_matrix[, "COD"]
+
+# Summary of correlation matrix
+summary(correlation_matrix)
+
+# Print correlation with COD
+print(correlation_with_COD)
+
+# Exclude "COD" column from model matrix and encode factors
+encoded_data <- predict(dummyVars(" ~ .", data = BREAST_DF_surv_clean[, -cod_column_index], fullRank = TRUE), newdata = BREAST_DF_surv_clean)
+
+# Alternatively, using ggplot
+correlation_df <- data.frame(variable = colnames(correlation_matrix), correlation = correlation_with_COD)
+# Create a ggplot with facets
+ggplot(correlation_df[1:19, ], aes(x = variable, y = correlation)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, 
+                                   size = 7)) +  # Adjust size as needed
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 25))  # Wrap text
+
+ggplot(correlation_df[20:39, ], aes(x = variable, y = correlation)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, 
+                                   size = 7)) +  # Adjust size as needed
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 25))  # Wrap text
+
+ggplot(correlation_df[40:59, ], aes(x = variable, y = correlation)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, 
+                                   size = 7)) +  # Adjust size as needed
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 25))  # Wrap text
+
+ggplot(correlation_df[60:77, ], aes(x = variable, y = correlation)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, 
+                                   size = 7)) +  # Adjust size as needed
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 25))  # Wrap text
+
+
+
+# Feature selection using caret
+ctrl <- trainControl(method = "repeatedcv", repeats = 3)
+
+# Preprocess the data and impute missing values with the median
+clean_data <- preProcess(BREAST_DF_surv_clean, method = "medianImpute")
+
+# Apply the preprocessing steps to the original dataset
+cleaned_df <- predict(clean_data, newdata = BREAST_DF_surv_clean)
+
+# Perform feature selection and variable importance calculation
+#var_importance <- varImp(train(COD ~ ., data = cleaned_df, method = "rf", trControl = ctrl))
+
+# Print variable importance
+#print(var_importance)
+
+
+
+
+
+
+```
+
+## Machine learning, Random Forest classification model
+
+To be able to work with this database, I need to transform the
+categorical data (factors) to numeric variables. A method known as
+target encoding is used [1,2].
+
+In general the machine learning phase consit of four main steps:
+
+1.  Encode categorical variables.
+
+2.  Split the data into training and testing sets.
+
+3.  Train the models.
+
+4.  Evaluate the models.
+
+### What is target encoding:
+
+Target encoding, also known as mean encoding or likelihood encoding, is
+a technique used to encode categorical variables into numerical values
+based on the target variable. It replaces each category with the mean
+(or some other summary statistic) of the target variable for that
+category. `caret` is the package in R that has this function embedded.
+
+### Different models woth One-hor encoding
+
+1.  **Cox Proportional Hazards Model (`coxph`):** This model is a
+    semi-parametric regression model commonly used for survival
+    analysis. It assumes that the hazard function is proportional over
+    time.
+
+2.  **Random Forest (`rf`):** Random forest is a popular machine
+    learning algorithm that can be adapted for survival analysis. It
+    constructs a multitude of decision trees during training and outputs
+    the mode of the classes (classification) or the mean prediction
+    (regression) of the individual trees.
+
+3.  **Survival Random Forest (`randomForestSRC`):** This is an
+    implementation of the random survival forest algorithm, specifically
+    designed for survival analysis. It extends traditional random forest
+    methods to handle censored survival data.
+
+4.  **Accelerated Failure Time Model (`survreg`):** This model is a
+    parametric regression model used for survival analysis. It models
+    the logarithm of survival time as a linear function of covariates.
+
+5.  **DeepSurv:** DeepSurv is a deep learning approach to survival
+    analysis, which uses neural networks to directly model the hazard
+    function.
+
+6.  **Gradient Boosting (`gbm`):** Gradient boosting is another machine
+    learning algorithm that can be adapted for survival analysis. It
+    builds an ensemble of decision trees sequentially, with each tree
+    correcting the errors of the previous one.
+
+```{r RF, echo=TRUE }
+
+
+BREAST_DF_surv_clean_no_missing <- na.omit(BREAST_DF_surv_clean)
+
+# Find the index of the column named "COD"
+#cod_column_index <- which(names(BREAST_DF_surv_clean) == "COD")
+cod_column_index <- which(names(BREAST_DF_surv_clean_no_missing) == "COD")
+
+
+# Exclude "COD" column from the data 
+#data_without_cod <- BREAST_DF_surv_clean[, -cod_column_index]
+data_without_cod <- BREAST_DF_surv_clean_no_missing[, -cod_column_index]
+
+# Perform one-hot encoding
+encoded_data <- dummyVars(" ~ .", data = data_without_cod)
+
+# Create the design matrix with encoded data
+design_matrix <- predict(encoded_data, newdata = data_without_cod)
+
+# Add the target variable (COD) back to the design matrix
+#design_matrix <- cbind(design_matrix, COD = BREAST_DF_surv_clean$COD)
+design_matrix <- cbind(design_matrix, COD = BREAST_DF_surv_clean_no_missing$COD)
+design_matrix <- data.frame(design_matrix)
+
+# Split the data into training and testing sets
+set.seed(123)  # for reproducibility
+train_indices <- createDataPartition(design_matrix$COD, p = 0.8, list = FALSE)
+train_data <- design_matrix[train_indices, ]
+test_data <- design_matrix[-train_indices, ]
+
+# Fit the Random Forest model
+model_rf <- randomForest(COD ~ ., data = train_data)
+
+# Make predictions on the test set
+predictions_rf <- predict(model_rf, newdata = test_data)
+
+# Evaluate the model
+confusionMatrix(predictions_rf, test_data$COD)
+
+
+
+
+# Fit the Cox Proportional Hazards model
+model_coxph <- coxph(Surv(COD, `Survival months`) ~ ., data = BREAST_DF_surv_clean)
+# Make predictions on the test set
+predictions_coxph <- predict(model_coxph, newdata = test_data)
+
+# Evaluate the model
+confusionMatrix(predictions_coxph, test_data$COD)
+
+
+
+
+
+#One-Hot Encoding:
+# Using dummies package
+encoded_data_onehot <- model.matrix(~ . - 1, data = BREAST_DF_surv_clean) # Remove intercept term
+
+
+# Load required library
+library(caret)
+
+# Perform one-hot encoding
+encoded_data <- dummyVars(" ~ .", data = BREAST_DF_surv_clean)
+
+# Find the index of the column named "COD"
+cod_column_index <- which(names(BREAST_DF_surv_clean) == "COD")
+
+# Exclude "COD" column from the data
+data_without_cod <- BREAST_DF_surv_clean[, -cod_column_index]
+
+# Perform one-hot encoding
+encoded_data <- predict(dummyVars(" ~ .", data = data_without_cod))
+
+
+
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data into training and testing sets (e.g., 80% training, 20% testing)
+train_index <- createDataPartition(encoded_data$COD, p = 0.8, list = FALSE)
+train_data <- encoded_data[train_index, ]
+test_data <- encoded_data[-train_index, ]
+
+
+#Random Survival Forest (RSF)
+# Load RSF library
+library(randomForestSRC)
+
+# Train RSF model
+rsf_model <- rfsrc(Surv(COD, event) ~ ., data = train_data)
+
+
+#DeepSurv
+# Load required libraries
+library(reticulate)
+use_python("path/to/your/python")  # Specify the path to your Python executable
+
+# Import DeepSurv library
+deep_surv_py <- import("deepsurv")
+
+# Train DeepSurv model (Python code)
+# deep_surv_model <- deep_surv_py$TrainDeepSurv(...)
+
+
+
+#DeepHit
+# Load required library
+library(randomForest)
+
+# Train random forest model
+rf_model <- randomForest(COD ~ ., data = train_data)
+
+
+
+#Cox Proportional Hazards (CoxPH)
+# Load survival library
+library(survival)
+
+# Train CoxPH model
+coxph_model <- coxph(Surv(COD, event) ~ ., data = train_data)
+
+
+
+
+
+
+
+# Handle Missing Values
+# Example: Impute missing values with median
+clean_data <- na.omit(BREAST_DF_surv_clean)  # Remove rows with missing values
+# Or
+# clean_data <- preProcess(BREAST_DF_surv_clean, method = "medianImpute")
+#or use mice 
+# Install and load required packages
+#install.packages("mice")
+#library(mice)
+# Perform multiple imputation
+#imputed_BREAST_DF_surv_clean <- mice(BREAST_DF_surv_clean)
+
+
+# Exclude "COD" column from model matrix and encode factors
+encoded_data <- predict(dummyVars("~ .", data = clean_data[, -cod_column_index], fullRank = TRUE))
+
+# Split Data into Training and Testing Sets
+set.seed(2014)  # for reproducibility
+train_index <- sample(nrow(encoded_data), 0.8 * nrow(encoded_data))
+train_data <- encoded_data[train_index, ]
+test_data <- encoded_data[-train_index, ]
+
+# Train Model to Predict COD
+# Example: Random Forest
+library(randomForest)
+model <- randomForest(COD ~ ., data = train_data)
+
+# Evaluate Model
+predictions <- predict(model, newdata = test_data)
+accuracy <- mean(predictions == test_data$COD)
+
+# Predict Survival Rate
+# Example: Use the trained model to predict survival rate
+# (Assuming you have another variable named "Survival Rate" in your dataset)
+survival_predictions <- predict(model, newdata = test_data)
+
+# Evaluate Survival Predictions
+# (You may need to compare these predictions with actual survival rates)
+
+
+```
+
+## Evaluate the models
+
+```{r eval_sec, echo=TRUE}
+
+# Evaluate models (e.g., on test_data)
+# For survival models: compute C-index, Brier score, etc.
+# For classification models: compute accuracy, precision, recall, F1-score, etc.
+
+
+
+```
+
+## References:
+
+[1] SEER (<https://seer.cancer.gov/data/access.html>)
+
+[2] [zgalochkina/SEER_solid_tumor: R code for SEER data analysis of
+solid tumor in different populations
+(github.com)](https://github.com/zgalochkina/SEER_solid_tumor)
+
+[1-3] [XAI_Healthcare_eXplainable_AI_in_Healthcare.pdf
+(upc.edu)](https://upcommons.upc.edu/bitstream/handle/2117/390006/XAI_Healthcare_eXplainable_AI_in_Healthcare.pdf?sequence=1)
+
+[2-4] Pargen, F., Pfisterer, F., Thomas, J., Bischl, B.: Regularized
+target encoding out performs traditional methods in supervised machine
+learning with high cardinality features. Computational Statistics 37(5),
+2671–2692 (Nov 2022)
+
+[5] American Cancer Society - Breast Cancer Survival Rates
