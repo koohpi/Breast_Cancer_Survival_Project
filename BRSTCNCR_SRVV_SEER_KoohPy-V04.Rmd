@@ -718,6 +718,22 @@ BREAST_DF_HHI_perc_surv$`Death %` <- round(BREAST_DF_HHI_perc_surv$`Event Popula
 
 kable(BREAST_DF_HHI_perc_surv)
 
+#next let's look into the Type of Cancer and the survival rate and whether it migth have been critical or not. 
+BREAST_DF_PSL_perc_surv <- BREAST_DF_surv %>%
+  dplyr::group_by(`Primary Site - labeled`) %>%
+  dplyr::add_count() %>%
+  filter(COD == "Breast") %>%
+  dplyr::summarise(`Event Population` = n(), 
+            Population = dplyr::first(n))  # Use `first()` to extract the total 
+
+#knwoign the population calcualte the gorup rate and death rate in each group 
+BREAST_DF_PSL_perc_surv$`Group % in total` <- round(BREAST_DF_PSL_perc_surv$Population/sum(BREAST_DF_PSL_perc_surv$Population)*100,2)
+
+BREAST_DF_PSL_perc_surv$`Death %` <- round(BREAST_DF_PSL_perc_surv$`Event Population`/BREAST_DF_PSL_perc_surv$Population*100,2)
+
+kable(BREAST_DF_PSL_perc_surv)
+
+
 
 # Create a list to store all your dataframes
 DF_names <- c (
@@ -725,7 +741,8 @@ DF_names <- c (
   "BREAST_DF_RNC_perc_surv",
   "BREAST_DF_SUR_perc_surv",
   "BREAST_DF_MARI_perc_surv",
-  "BREAST_DF_HHI_perc_surv")
+  "BREAST_DF_HHI_perc_surv",
+  "BREAST_DF_PSL_perc_surv")
 
 # Create an empty list to store plots
 plot_list <- list()
@@ -736,8 +753,9 @@ chart_title <- c("# of Malignant Tumors",
                  "Radiation/Chemo Status", 
                  "Cancer Surgery",
                  "Marital Status",
-                 "Household Income")
-
+                 "Household Income",
+                 "Primary Site Labeled")
+set.seed(2014)
 # Loop through each dataframe
 for (i in 1:length(DF_names)) {
   # Access the dataframe
